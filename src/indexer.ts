@@ -568,27 +568,28 @@ export async function startIndexer(network?: Network): Promise<void> {
 }
 
 /**
- * Start one loop per enabled network (see `NETWORKS`).
+ * Split the requested networks into the ones that can start and the ones that
+ * cannot, recording why for the latter.
  *
- * Loops are fault-isolated from each other: a loop that throws out of its own
- * retry handling is restarted on its own, because a mainnet RPC key expiring
- * must not stop testnet indexing. `startIndexer` never resolves, so this
- * returns immediately with the loops running in the background.
+ * Separate from starting them because this answer is what a caller acts on:
+ * `/status` reports the networks that were skipped, and a test can ask which
+ * loops *would* run without leaving a real one polling after the case that
+ * asked has finished. `startAllIndexers` starts what this returns.
+ *
+ * Validated per network, and a failure skips that network rather than throwing.
+ *
+ * `validateNetworkConfig(networks)` threw for the whole set if any one entry
+ * was misconfigured, which broke the isolation promised in
+ * `startAllIndexers` in the worst way: an unset SOROBAN_RPC_URL_MAINNET killed
+ * the process during main(), taking testnet indexing AND the HTTP API with it.
+ * The API does not index. The naira rails are plain HTTP to Linq and never
+ * touch Soroban RPC, so a missing mainnet endpoint was stopping /ngn from
+ * answering for a reason that has nothing to do with it.
+ *
+ * Serving reads on the networks that *are* configured, while saying loudly
+ * which one is not, beats refusing to serve anything.
  */
-export function startAllIndexers(networks: Network[] = enabledNetworks()): Network[] {
-  // Validated per network, and a failure skips that network rather than
-  // throwing.
-  //
-  // `validateNetworkConfig(networks)` threw for the whole set if any one entry
-  // was misconfigured, which broke the isolation promised above in the worst
-  // way: an unset SOROBAN_RPC_URL_MAINNET killed the process during main(),
-  // taking testnet indexing AND the HTTP API with it. The API does not index.
-  // The naira rails are plain HTTP to Linq and never touch Soroban RPC, so a
-  // missing mainnet endpoint was stopping /ngn from answering for a reason
-  // that has nothing to do with it.
-  //
-  // Serving reads on the networks that *are* configured, while saying loudly
-  // which one is not, beats refusing to serve anything.
+export function planNetworks(networks: Network[] = enabledNetworks()): Network[] {
   const runnable: Network[] = [];
   for (const net of networks) {
     try {
@@ -611,8 +612,22 @@ export function startAllIndexers(networks: Network[] = enabledNetworks()): Netwo
       "[indexer] No network is configured for indexing. The API is still serving; " +
         "nothing is being indexed.",
     );
-    return [];
   }
+
+  return runnable;
+}
+
+/**
+ * Start one loop per enabled network (see `NETWORKS`).
+ *
+ * Loops are fault-isolated from each other: a loop that throws out of its own
+ * retry handling is restarted on its own, because a mainnet RPC key expiring
+ * must not stop testnet indexing. `startIndexer` never resolves, so this
+ * returns immediately with the loops running in the background.
+ */
+export function startAllIndexers(networks: Network[] = enabledNetworks()): Network[] {
+  const runnable = planNetworks(networks);
+  if (runnable.length === 0) return [];
 
   console.log(`[indexer] Starting loops for: ${runnable.join(", ")}`);
 

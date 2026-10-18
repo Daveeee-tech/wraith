@@ -15,6 +15,7 @@ import {
   resolveNftContractIds,
   resolveSacContractIds,
   runningNetworks,
+  planNetworks,
   startAllIndexers,
   isIndexerRunning,
   getIndexerUnstartedReason,
@@ -227,19 +228,33 @@ describe("loop state isolation", () => {
   it("handles unconfigured RPC path gracefully and tracks unstarted status (#238)", () => {
     // testnet has public default; mainnet has no SOROBAN_RPC_URL_MAINNET
     const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
-    const consoleLog = jest.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      // Pass both networks where mainnet is missing its RPC endpoint
-      const runnable = startAllIndexers(["testnet", "mainnet"]);
+      // Pass both networks where mainnet is missing its RPC endpoint.
+      // `planNetworks`, not `startAllIndexers`: the case asks which loops the
+      // configuration yields, and calling the starter would leave a real
+      // testnet loop polling RPC long after this case has returned.
+      const runnable = planNetworks(["testnet", "mainnet"]);
 
-      expect(runnable).toContain("testnet");
-      expect(runnable).not.toContain("mainnet");
-      expect(isIndexerRunning("mainnet")).toBe(false);
+      expect(runnable).toEqual(["testnet"]);
       expect(getIndexerUnstartedReason("mainnet")).toMatch(/SOROBAN_RPC_URL_MAINNET is required/);
     } finally {
       consoleError.mockRestore();
-      consoleLog.mockRestore();
+    }
+  });
+
+  it("starts nothing and throws nothing when no network is configured (#238)", () => {
+    // The original failure: one missing endpoint killed the process during
+    // main(), taking the API down with it.
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      expect(() => startAllIndexers(["mainnet"])).not.toThrow();
+      expect(startAllIndexers(["mainnet"])).toEqual([]);
+      expect(isIndexerRunning("mainnet")).toBe(false);
+      expect(runningNetworks()).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
     }
   });
 });
