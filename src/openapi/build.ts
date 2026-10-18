@@ -40,6 +40,7 @@ import {
   transferExportQuerySchema,
   binaryExportResponseSchema,
   linqWebhookAckResponseSchema,
+  offrampAvailabilityResponseSchema,
   offrampRateQuerySchema,
   offrampRateResponseSchema,
   offrampVerifyBankBodySchema,
@@ -462,6 +463,26 @@ const internalErrorResponses = {
   502: { description: "Payout provider error", content: { "application/json": { schema: offrampErrorResponseSchema } } },
   503: { description: "Offramp not configured on this deployment", content: { "application/json": { schema: offrampErrorResponseSchema } } },
 };
+
+registry.registerPath({
+  method: "get",
+  path: "/offramp/availability",
+  summary: "Is cash-out enabled on this deployment",
+  description:
+    internalDescription +
+    " Answers the availability question without pricing anything: it makes no provider call, so it costs none of the shared rate allowance.",
+  "x-internal": true,
+  responses: {
+    200: {
+      description: "OK",
+      content: { "application/json": { schema: offrampAvailabilityResponseSchema } },
+    },
+    ...commonErrorResponses,
+    // No 502: nothing here reaches the provider. 503 is the answer a client
+    // hides its cash-out CTA on, so it is the one that has to be documented.
+    503: { description: "Offramp not configured on this deployment", content: { "application/json": { schema: offrampErrorResponseSchema } } },
+  },
+});
 
 registry.registerPath({
   method: "get",

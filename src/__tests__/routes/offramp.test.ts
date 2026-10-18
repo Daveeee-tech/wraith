@@ -595,3 +595,41 @@ describe("GET /offramp/rate — naira per coin, not naira per dollar", () => {
     expect(res.status).toBe(502);
   });
 });
+
+/**
+ * The endpoint `isOfframpAvailable()` is meant to call instead of the rate one.
+ * What makes it usable as a gate is that it cannot price anything: a check that
+ * runs every time an app opens must not spend the provider allowance that every
+ * rate read shares.
+ */
+describe("GET /offramp/availability", () => {
+  beforeEach(() => {
+    // Call history is process-wide across describes in this file, and this test
+    // is about an absence of calls.
+    mockNgnPerCoin.mockClear();
+  });
+
+  it("answers without touching the price path", async () => {
+    const res = await request(makeApp()).get("/offramp/availability");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ available: true });
+    expect(mockNgnPerCoin).not.toHaveBeenCalled();
+  });
+
+  it("is never cached, because a stale 200 keeps offering a tile that 503s", async () => {
+    const res = await request(makeApp()).get("/offramp/availability");
+    expect(res.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("says so when this deployment has no payout key", async () => {
+    const saved = process.env.LINQ_API_KEY;
+    delete process.env.LINQ_API_KEY;
+    try {
+      const res = await request(makeApp()).get("/offramp/availability");
+      expect(res.status).toBe(503);
+      expect(res.body.error).toMatch(/not configured/i);
+    } finally {
+      process.env.LINQ_API_KEY = saved;
+    }
+  });
+});

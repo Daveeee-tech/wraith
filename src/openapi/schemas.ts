@@ -635,6 +635,15 @@ export const linqWebhookAckResponseSchema = z.object({
 
 // ─── /offramp/* — cash-out surface (internal) ───────────────────────────────
 
+/**
+ * `available` is always true on a 200; the answer a client gates on is the
+ * status. The body exists so a redirect or a proxy's error page cannot be read
+ * as cash-out being up by a caller that only looked at the status code.
+ */
+export const offrampAvailabilityResponseSchema = z.object({
+  available: z.literal(true),
+});
+
 export const offrampRateQuerySchema = z
   .object({
     /**

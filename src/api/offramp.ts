@@ -144,6 +144,35 @@ export function createOfframpRouter(
     next();
   });
 
+  /**
+   * Is cash-out switched on in this deployment?
+   *
+   * This exists so the availability gate has an endpoint that answers the
+   * question it is actually asking. `isOfframpAvailable()` used to call
+   * `/offramp/rate` and read any error as "no cash-out", which made a pricing
+   * endpoint the health check for a feature — so a change to the rate contract
+   * was an outage for every build that gated on it, and a coin-less rate request
+   * was the most reliable way to ask "is the service up".
+   *
+   * It deliberately does not contact the provider. Every rate read spends from
+   * an allowance all users share, and a gate that runs when an app opens — on
+   * every install, several times a day — is the worst possible place to spend
+   * it. "Is the provider reachable right now" is not this question, and cannot
+   * be answered cheaply: creating an order is what discovers that, and it
+   * reports the failure itself.
+   *
+   * The `available: true` body is not decoration. A client that only looked at
+   * the status would treat a redirect, an HTML error page from a proxy, or a
+   * captive portal as cash-out being up; a body it has to parse does not.
+   */
+  router.get("/availability", (_req: Request, res: Response) => {
+    // no-store: this is the answer a client gates a CTA on, and a cached 200
+    // from before a rollback would keep offering cash-out that 503s on every
+    // other route.
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ available: true });
+  });
+
   // `coin` is the answer's subject, so the response always names it — that is
   // what lets a client tell which asset it was quoted for instead of assuming.
   //
@@ -164,9 +193,9 @@ export function createOfframpRouter(
   //
   // So this is a staged removal, not a decision to keep the default:
   //   1. now  - unknown coin 400s; missing coin answers as USDC and logs.
-  //   2. next - both clients send `coin`, and the availability check stops
-  //             borrowing this endpoint ("is the service up" and "what is the
-  //             rate for XLM" are different questions).
+  //   2. next - both clients send `coin`, and the availability check moves to
+  //             `GET /offramp/availability` above instead of borrowing this
+  //             endpoint. Stage 3 is what those clients unblock.
   //   3. then - once an APK carrying step 2 is actually out and
   //             `logCoinlessRateRequest` has gone quiet, a missing coin 400s and
   //             this comment becomes the onramp's.
