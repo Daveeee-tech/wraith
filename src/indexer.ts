@@ -241,10 +241,22 @@ export function setIndexerUnstarted(network: Network, reason: string): void {
  */
 const restartTimers = new Set<NodeJS.Timeout>();
 
+/**
+ * Networks `startAllIndexers` was asked to keep running.
+ *
+ * A loop that rejects while its network is still in here crashed on its own
+ * and earns a restart. One that rejects after the set was dropped is a case
+ * tearing the database out from under it, and announcing "restarting in 10s"
+ * for a loop someone deliberately stopped would be a lie — with output
+ * arriving after the suite finished, which Jest counts as a failure.
+ */
+const requestedNetworks = new Set<Network>();
+
 /** Test-only: drops loop state and unstarted records between cases. */
 export function _resetIndexerLoops(): void {
   for (const timer of restartTimers) clearTimeout(timer);
   restartTimers.clear();
+  requestedNetworks.clear();
   loops.clear();
   unstartedNetworks.clear();
 }
@@ -547,6 +559,7 @@ export async function startIndexer(network?: Network): Promise<void> {
 
       await maybeTombstoneExpiredContracts(loop, currentLedger);
     } catch (err) {
+      if (loops.get(net) !== loop) return;
       console.error(`[indexer/${net}] Unhandled error in poll loop:`, err);
       // Back off before retrying to avoid hammering the RPC on persistent errors
       await sleep(POLL_INTERVAL_MS * 2);
@@ -605,6 +618,7 @@ export function startAllIndexers(networks: Network[] = enabledNetworks()): Netwo
 
   const run = (net: Network) => {
     startIndexer(net).catch((err) => {
+      if (!requestedNetworks.has(net)) return;
       console.error(`[indexer/${net}] loop crashed, restarting in 10s:`, err);
       const timer = setTimeout(() => {
         restartTimers.delete(timer);
@@ -619,6 +633,7 @@ export function startAllIndexers(networks: Network[] = enabledNetworks()): Netwo
     });
   };
 
+  for (const net of runnable) requestedNetworks.add(net);
   for (const net of runnable) run(net);
   return runnable;
 }
