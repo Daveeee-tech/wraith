@@ -211,8 +211,17 @@ export function runningNetworks(): Network[] {
   return [...loops.keys()];
 }
 
-/** Test-only: drops loop state between cases. */
+/**
+ * Restarts scheduled after a loop crashed, kept so a case that started a loop
+ * can cancel it again. Without this the chain outlives whoever called
+ * `startAllIndexers` — see `_resetIndexerLoops`.
+ */
+const restartTimers = new Set<NodeJS.Timeout>();
+
+/** Test-only: drops loop state and cancels pending restarts between cases. */
 export function _resetIndexerLoops(): void {
+  for (const timer of restartTimers) clearTimeout(timer);
+  restartTimers.clear();
   loops.clear();
 }
 
@@ -568,7 +577,16 @@ export function startAllIndexers(networks: Network[] = enabledNetworks()): Netwo
   const run = (net: Network) => {
     startIndexer(net).catch((err) => {
       console.error(`[indexer/${net}] loop crashed, restarting in 10s:`, err);
-      setTimeout(() => run(net), 10_000);
+      const timer = setTimeout(() => {
+        restartTimers.delete(timer);
+        run(net);
+      }, 10_000);
+      restartTimers.add(timer);
+      // Unref'd, because a restart wait is not a reason to keep a process
+      // alive — the API listening is. Held to the event loop, this chain is
+      // immortal: the first crashed loop reschedules itself forever, and
+      // anything that imported the module can never finish, let alone exit.
+      timer.unref();
     });
   };
 
@@ -577,5 +595,10 @@ export function startAllIndexers(networks: Network[] = enabledNetworks()): Netwo
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+  return new Promise((resolve) => {
+    // Same reason as the restart timer above: the gap between two polls must
+    // not be what keeps the process running.
+    const timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
 }
