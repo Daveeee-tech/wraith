@@ -234,6 +234,13 @@ export function setIndexerUnstarted(network: Network, reason: string): void {
   unstartedNetworks.set(network, reason);
 }
 
+/**
+ * Restarts scheduled after a loop crashed, kept so a case that started a loop
+ * can cancel it again. Without this the chain outlives whoever called
+ * `startAllIndexers` — see `_resetIndexerLoops`.
+ */
+const restartTimers = new Set<NodeJS.Timeout>();
+
 /** Test-only: drops loop state and unstarted records between cases. */
 export function _resetIndexerLoops(): void {
   for (const timer of restartTimers) clearTimeout(timer);
