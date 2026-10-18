@@ -519,7 +519,11 @@ export async function startIndexer(network?: Network): Promise<void> {
   }
 
   // ── Polling loop ────────────────────────────────────────────────────────────
-  while (true) {
+  // Runs while this loop is still the registered one. `_resetIndexerLoops`
+  // drops registrations between test cases, and a loop that outlives them
+  // would keep polling — and start a fresh RPC request — after the code that
+  // started it is gone. Production registers once and never clears.
+  while (loops.get(net) === loop) {
     try {
       const tip = await withRetry(() => loop.sourceSwitcher.getLatestLedger());
       const target = tip - TIP_LAG;

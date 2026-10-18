@@ -46,6 +46,12 @@ beforeEach(() => {
   _resetIndexerLoops();
 });
 
+// A case that calls `startAllIndexers` starts a real loop, and the next
+// `beforeEach` is too late for the last case in the file: nothing runs after
+// it, so that loop would still be polling while Jest tears the environment
+// down.
+afterEach(() => _resetIndexerLoops());
+
 describe("enabledNetworks", () => {
   it("defaults to the single configured network, so existing deployments are unchanged", () => {
     expect(enabledNetworks()).toEqual(["testnet"]);
