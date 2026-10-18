@@ -52,7 +52,7 @@ jest.mock("../../api/ngn", () => ({
   ngnPerCoin: jest.fn(),
 }));
 
-import { createOfframpRouter } from "../../api/offramp";
+import { createOfframpRouter, __resetCoinlessRateLog } from "../../api/offramp";
 import { networkMiddleware } from "../../middleware/network";
 import { LinqError, createOfframpOrder, getOfframpStatus } from "../../linq/client";
 import { ngnPerCoin } from "../../api/ngn";
@@ -476,6 +476,13 @@ describe("GET /offramp/rate — naira per coin, not naira per dollar", () => {
   // /b2b/rate number — naira per dollar.  Dividing a naira amount by that
   // gives the right USDC figure by coincidence (1 USDC = $1) and the wrong
   // figure for every other asset by that asset's price.
+  //
+  // The rollout is staged because installed APKs cannot be updated from here:
+  // an unknown coin is refused today, while a missing coin is still answered —
+  // priced for USDC, which is the number those builds already get — and logged.
+  // See the note in api/offramp.ts.
+
+  let warnings: string[];
 
   beforeEach(() => {
     // 1,655 NGN per USDC (dollar-pegged, so same as NGN/USD)
@@ -483,12 +490,21 @@ describe("GET /offramp/rate — naira per coin, not naira per dollar", () => {
     mockNgnPerCoin.mockImplementation(async (coin: string) =>
       coin === "usdc" ? 1655 : 290,
     );
+    warnings = [];
+    jest
+      .spyOn(console, "warn")
+      .mockImplementation((...args: unknown[]) => void warnings.push(args.join(" ")));
+    __resetCoinlessRateLog();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   function rateUrl(coin?: string) {
     const app = makeApp();
     const req = request(app).get("/offramp/rate");
-    return coin ? req.query({ coin }) : req;
+    return coin === undefined ? req : req.query({ coin });
   }
 
   it("returns naira per XLM for coin=xlm", async () => {
@@ -515,16 +531,56 @@ describe("GET /offramp/rate — naira per coin, not naira per dollar", () => {
     expect(xlm.body.rate).not.toBeCloseTo(usdc.body.rate, 0);
   });
 
-  it("refuses a request with no coin — cannot silently return a dollar rate", async () => {
+  it("answers a coin-less request with the USDC rate it gets today", async () => {
     const res = await rateUrl();
+    expect(res.status).toBe(200);
+    expect(res.body.rate).toBeCloseTo(1655, 6);
+    expect(mockNgnPerCoin).toHaveBeenCalledWith("usdc");
+  });
+
+  it("names the coin a coin-less answer is priced for", async () => {
+    // The client-side half of the staged rollout depends on this: a build that
+    // asks for no coin can read which asset it was actually quoted for instead
+    // of assuming its dollar figure was a coin figure.
+    const res = await rateUrl();
+    expect(res.body.coin).toBe("usdc");
+  });
+
+  it("logs a coin-less request as deprecated, once per caller", async () => {
+    await rateUrl();
+    await rateUrl();
+    const deprecation = warnings.filter((w) => w.includes("deprecated"));
+    expect(deprecation).toHaveLength(1);
+    expect(deprecation[0]).toContain("/offramp/rate without coin");
+    expect(deprecation[0]).toContain("usdc");
+  });
+
+  it("does not log a deprecation for a request that named a coin", async () => {
+    await rateUrl("xlm");
+    expect(warnings.filter((w) => w.includes("deprecated"))).toHaveLength(0);
+  });
+
+  it("refuses an unknown coin — a coin we cannot price is not a default", async () => {
+    const res = await rateUrl("doge");
     expect(res.status).toBe(400);
     expect(mockNgnPerCoin).not.toHaveBeenCalled();
   });
 
-  it("refuses an unknown coin", async () => {
-    const res = await rateUrl("doge");
+  it("refuses an empty-string coin, which is a caller bug rather than an old APK", async () => {
+    // `?coin=` parses as an empty string: a client that built the query and
+    // lost the value must not be answered with a USDC number it will treat as
+    // XLM. Only a request that never sent the parameter is legacy.
+    const app = makeApp();
+    const res = await request(app).get("/offramp/rate?coin=");
     expect(res.status).toBe(400);
     expect(mockNgnPerCoin).not.toHaveBeenCalled();
+  });
+
+  it("accepts a coin in any case, so an old caller is not refused for casing", async () => {
+    const app = makeApp();
+    const res = await request(app).get("/offramp/rate").query({ coin: "XLM" });
+    expect(res.status).toBe(200);
+    expect(res.body.coin).toBe("xlm");
   });
 
   it("the response carries no currency field — rate is already in NGN", async () => {

@@ -637,16 +637,24 @@ export const linqWebhookAckResponseSchema = z.object({
 
 export const offrampRateQuerySchema = z
   .object({
-    /** Which asset to price. Required — defaulting silently to the dollar rate was the bug. */
-    coin: z.enum(["xlm", "usdc"]).openapi({
-      description: "Asset to price. Required: omitting it would silently return a dollar rate.",
+    /**
+     * Which asset to price. Omitted is served as `usdc` and logged — see the
+     * rollout note in `api/offramp.ts`; omitting it will 400 once the installed
+     * clients send a coin.
+     */
+    coin: z.enum(["xlm", "usdc"]).optional().openapi({
+      description:
+        "Asset to price. Send it: without one the answer is priced for `usdc`, which is naira per dollar and wrong for every other asset by that asset's price. Omitting it is deprecated and will be refused once the installed wallet builds ask for a coin; a response always names the coin it was priced for.",
       example: "usdc",
     }),
   })
   .passthrough();
 
 export const offrampRateResponseSchema = z.object({
-  coin: z.enum(["xlm", "usdc"]),
+  coin: z.enum(["xlm", "usdc"]).openapi({
+    description:
+      "The asset `rate` is quoted per unit of. Always present, including for a request that named none — which is priced as `usdc`.",
+  }),
   rate: z.number().openapi({
     description: "Naira per one unit of the requested coin, not naira per dollar.",
   }),

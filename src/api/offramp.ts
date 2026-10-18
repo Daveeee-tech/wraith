@@ -94,6 +94,39 @@ export function createOrderLookupLimiter(): RateLimitRequestHandler {
   });
 }
 
+/**
+ * The coin a coin-less rate request is priced for.
+ *
+ * A USDC is a dollar, so `ngnPerCoin("usdc")` is naira-per-dollar — the number
+ * `/offramp/rate` returned before `coin` existed. Defaulting to it changes
+ * nothing for the caller that omits the param; see the rollout note in the
+ * `/rate` handler for why refusing it is the wrong order of operations.
+ */
+const LEGACY_DEFAULT_COIN: OnrampCoin = "usdc";
+
+// One line per caller, not one per request: every cash-out screen reload is a
+// request, and a log that floods is a log nobody reads. The key is what a client
+// sends as its User-Agent, which is enough to tell "the old APK" from "the web
+// wallet forgot the param" — and it is not personal data, unlike an IP. This
+// does not need to know *who* is asking, only whether anyone still is, and when
+// they stop.
+const legacyCoinCallers = new Set<string>();
+
+function logCoinlessRateRequest(req: Request): void {
+  const caller = req.get("user-agent") || "(no User-Agent)";
+  if (legacyCoinCallers.has(caller)) return;
+  legacyCoinCallers.add(caller);
+  console.warn(
+    `[offramp] deprecated: GET /offramp/rate without coin from "${caller}" — priced for ` +
+      `${LEGACY_DEFAULT_COIN}. Sending coin will be required once every installed build does.`,
+  );
+}
+
+/** Test seam: the deprecation log fires once per caller for the process. */
+export function __resetCoinlessRateLog(): void {
+  legacyCoinCallers.clear();
+}
+
 export function createOfframpRouter(
   options: { lookupLimiter?: RateLimitRequestHandler } = {},
 ): Router {
@@ -111,18 +144,36 @@ export function createOfframpRouter(
     next();
   });
 
-  // `coin` is required, for the same reason the onramp refuses without one.
+  // `coin` is the answer's subject, so the response always names it — that is
+  // what lets a client tell which asset it was quoted for instead of assuming.
   //
-  // Linq's /b2b/rate returns naira per dollar regardless of which coin is
-  // asked about.  A client that calls this without a coin and divides a naira
-  // amount by the answer gets the right number of USDC (a USDC is a dollar),
-  // but the wrong number of XLM by exactly the price of XLM.  The onramp had
-  // the identical defect and it cost real money: ₦1,000 bought 0.6 XLM
-  // instead of 3.6.  Defaulting here would reproduce that silently, so the
-  // only safe answer to a missing coin is a 400.
+  // A request with **no** coin is still answered, with the USDC rate, for one
+  // reason: installed APKs. `isOfframpAvailable()` in the mobile client treats
+  // any error here as "cash-out is down" and hides the tile, so a 400 on the
+  // coin-less request does not ask anyone to pick a coin — it removes the
+  // feature for every user on an old build until they happen to update, and
+  // looks like an outage. #216 was this same mistake and the recorded lesson is
+  // ship the client first.
   //
+  // Answering is not the silent defaulting the onramp refuses. `ngnPerCoin` for
+  // USDC *is* naira-per-dollar (a USDC is a dollar, and `usdPerCoin` returns 1
+  // without looking at a book), so a coin-less caller gets back exactly the
+  // number it gets today — correct for USDC, wrong for XLM, and already wrong
+  // in both clients. Refusing does not make an old APK price XLM correctly; it
+  // only stops it pricing at all.
+  //
+  // So this is a staged removal, not a decision to keep the default:
+  //   1. now  - unknown coin 400s; missing coin answers as USDC and logs.
+  //   2. next - both clients send `coin`, and the availability check stops
+  //             borrowing this endpoint ("is the service up" and "what is the
+  //             rate for XLM" are different questions).
+  //   3. then - once an APK carrying step 2 is actually out and
+  //             `logCoinlessRateRequest` has gone quiet, a missing coin 400s and
+  //             this comment becomes the onramp's.
+  const COINS: Record<string, OnrampCoin> = { xlm: "xlm", usdc: "usdc" };
+
   // The rate is computed by ngnPerCoin (shared with the onramp), which
-  // multiplies the NGN/USD rate by the coin's USD price so both rails quote
+  // multiplies the NGN/USD rate by the coin's USD price, so both rails quote
   // from one source.
   //
   // Per-coin cache: every cash-out screen asks for the rate when it opens, and
@@ -130,16 +181,27 @@ export function createOfframpRouter(
   // indicative (the binding one is locked into the order), so a few seconds of
   // reuse costs nothing.  Coins are cached separately so an XLM quote does not
   // evict a USDC quote that arrived a moment before.
-  const COINS: Record<string, OnrampCoin> = { xlm: "xlm", usdc: "usdc" };
   const RATE_CACHE_MS = 20_000;
   const rateCacheByCoins = new Map<OnrampCoin, { at: number; body: unknown }>();
 
   router.get("/rate", async (req: Request, res: Response) => {
-    const resolvedCoin = COINS[String(req.query["coin"] ?? "").toLowerCase()];
+    // An absent `coin` is a build too old to send one, so it is answered the way
+    // it already reads the answer. A `coin` that is present but does not resolve
+    // — `doge`, an empty value left behind by a client that lost the variable, a
+    // repeated parameter — is a caller bug, and a plausible number for the wrong
+    // asset is the one outcome this endpoint exists to refuse. Values are
+    // lowercased and trimmed, so `XLM` is not read as unknown.
+    const supplied = req.query["coin"];
+    const resolvedCoin =
+      supplied === undefined
+        ? LEGACY_DEFAULT_COIN
+        : COINS[String(supplied).trim().toLowerCase()];
+
     if (!resolvedCoin) {
       res.status(400).json({ error: `coin must be one of: ${Object.keys(COINS).join(", ")}` });
       return;
     }
+    if (supplied === undefined) logCoinlessRateRequest(req);
 
     const cached = rateCacheByCoins.get(resolvedCoin);
     if (cached && Date.now() - cached.at < RATE_CACHE_MS) {

@@ -2460,12 +2460,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Indicative NGN/USDC rate
+         * Indicative naira-per-coin rate
          * @description Internal endpoint. Not part of the public data API: (provider callback / wallet-only cash-out surface served on behalf of the Veil wallet client).
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Asset to price. Send it: without one the answer is priced for `usdc`, which is naira per dollar and wrong for every other asset by that asset's price. Omitting it is deprecated and will be refused once the installed wallet builds ask for a coin; a response always names the coin it was priced for. */
+                    coin?: "xlm" | "usdc";
+                };
                 header?: never;
                 path?: never;
                 cookie?: never;
@@ -2479,9 +2482,10 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            /** @description The asset `rate` is quoted per unit of. Always present, including for a request that named none — which is priced as `usdc`. */
+                            coin: "xlm" | "usdc";
+                            /** @description Naira per one unit of the requested coin, not naira per dollar. */
                             rate: number;
-                            currency: string;
-                            coin: string;
                             /** @enum {boolean} */
                             indicative: true;
                         };

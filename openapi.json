@@ -5125,11 +5125,11 @@
                 "xlm",
                 "usdc"
               ],
-              "description": "Asset to price. Required: omitting it would silently return a dollar rate.",
+              "description": "Asset to price. Send it: without one the answer is priced for `usdc`, which is naira per dollar and wrong for every other asset by that asset's price. Omitting it is deprecated and will be refused once the installed wallet builds ask for a coin; a response always names the coin it was priced for.",
               "example": "usdc"
             },
-            "required": true,
-            "description": "Asset to price. Required: omitting it would silently return a dollar rate.",
+            "required": false,
+            "description": "Asset to price. Send it: without one the answer is priced for `usdc`, which is naira per dollar and wrong for every other asset by that asset's price. Omitting it is deprecated and will be refused once the installed wallet builds ask for a coin; a response always names the coin it was priced for.",
             "name": "coin",
             "in": "query"
           }
@@ -5147,7 +5147,8 @@
                       "enum": [
                         "xlm",
                         "usdc"
-                      ]
+                      ],
+                      "description": "The asset `rate` is quoted per unit of. Always present, including for a request that named none — which is priced as `usdc`."
                     },
                     "rate": {
                       "type": "number",
