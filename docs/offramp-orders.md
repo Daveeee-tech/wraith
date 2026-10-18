@@ -122,22 +122,32 @@ time has passed.
 
 ### Stage 2, in the wallet repos
 
-The call sites were given in review — two in the web wallet's `lib/offramp.ts`
-and two in mobile's — and the change at each is small:
+Written up as the contract first; the clients now live in
+[`Miracle656/veil`](https://github.com/Miracle656/veil), and stage 2 is
+[veil#1124](https://github.com/Miracle656/veil/pull/1124). Four call sites, one
+rate and one availability probe per client:
 
-- `call('/offramp/rate')` becomes a call that sends `coin`, set to the asset that
-  screen is actually cashing out, not a constant.
+- `call('/offramp/rate')` becomes a call that sends `coin`. Each cash-out screen
+  names the asset it moves — both of them are USDC-only today, so a per-screen
+  constant is right, as long as the constant says which asset and sits on the
+  screen that knows. A `lib` that hard-codes `usdc` on the caller's behalf is
+  what made this invisible in the first place.
 - `isOfframpAvailable()` moves to `/offramp/availability`, and treats a non-200
-  **or** a body without `available: true` as unavailable. It keeps its cached
-  flag — and a build still holding a cached `0` from the old rate-based probe is
-  wrong until that key is cleared, so bump or invalidate it in the upgrade.
-- A screen showing a quote should read `coin` off the rate response instead of
-  assuming its request was honoured. That field is the only signal a build has
-  that it is on the deprecated path.
+  **or** a body without `available: true` as unavailable. A 200 from an edge
+  proxy parses to `{}`, and an unread "yes" offers a flow that fails on the
+  first tap.
+- The cached availability flag keeps its key. A build holding a cached `0` from
+  the rate-based probe needs no migration: the stored meaning is unchanged ("the
+  rails answered"), and every launch runs a live probe that overwrites it. This
+  was first written as needing a bump, which was wrong.
+- A screen showing a quote reads `coin` back off the response instead of
+  assuming its request was honoured, and refuses a quote for anything else.
+  That field is the only signal a build has that it is on the deprecated path —
+  and `ngn / rate` decides how much asset a user sends, so a USDC number
+  answering to `xlm` is not a rounding error.
 
-Neither client repo is in this workspace, so this is written as the contract the
-change has to satisfy, not as a patch. A build that ships only the availability
-half stays compatible with stage 1 — that is the point of staging it this way.
+A build that ships only the availability half stays compatible with stage 1 —
+that is the point of staging it this way.
 
 ## Upgrading
 

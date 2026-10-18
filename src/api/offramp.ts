@@ -195,7 +195,7 @@ export function createOfframpRouter(
   //   1. now  - unknown coin 400s; missing coin answers as USDC and logs.
   //   2. next - both clients send `coin`, and the availability check moves to
   //             `GET /offramp/availability` above instead of borrowing this
-  //             endpoint. Stage 3 is what those clients unblock.
+  //             endpoint. veil#1124. Stage 3 is what those clients unblock.
   //   3. then - once an APK carrying step 2 is actually out and
   //             `logCoinlessRateRequest` has gone quiet, a missing coin 400s and
   //             this comment becomes the onramp's.
